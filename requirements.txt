@@ -1,0 +1,7 @@
+pandas>=2.0
+numpy>=1.24
+pyyaml>=6.0
+pyarrow>=12.0        # parquet cache
+
+# Optional — only needed for live/real exchange data and trading:
+# ccxt>=4.0

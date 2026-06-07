@@ -1,0 +1,40 @@
+# Backtest configuration. Copy and tweak per experiment.
+data:
+  source: synthetic        # synthetic | ccxt  (ccxt needs network + `pip install ccxt`)
+  exchange: binance        # used when source: ccxt (pick one reachable in your region)
+  symbol: BTC/USDT
+  timeframe: 1h
+  start: "2021-01-01"
+  end: "2024-01-01"
+  cache_dir: data/cache
+  synthetic:               # only used when source: synthetic
+    seed: 42
+    bars: 8760             # ~1 year of hourly bars
+    start_price: 30000
+    annual_drift: 0.20
+    annual_vol: 0.70
+
+strategy:
+  name: momentum           # momentum | mean_reversion
+  params:
+    fast: 24
+    slow: 96
+    breakout: 48
+    atr_window: 14
+    regime_window: 200
+    allow_short: false
+
+backtest:
+  initial_capital: 10000
+  fee_bps: 7.5             # per-side taker fee in basis points (0.075% = Binance spot taker)
+  slippage_bps: 2.0        # per-side slippage assumption
+  risk:
+    risk_per_trade: 0.01   # risk 1% of equity per trade (via ATR stop)
+    atr_stop_mult: 3.0     # stop distance = 3 x ATR
+    max_leverage: 1.0      # 1.0 = no leverage
+
+# Out-of-sample evaluation: fraction of data reserved for testing (no peeking).
+# The runner reports in-sample and out-of-sample metrics separately so you can
+# see whether an edge survives data the parameters were not chosen on.
+evaluation:
+  oos_fraction: 0.3
