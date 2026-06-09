@@ -22,10 +22,10 @@ import numpy as np
 import pandas as pd
 
 from botcore.backtest.portfolio import PortfolioConfig, run_portfolio
-from botcore.data.funding import load_funding
+from botcore.data.funding import load_funding, load_perp_closes
 from botcore.data.universe import load_universe
 from botcore.metrics.performance import compute_metrics
-from botcore.strategy.carry import carry_returns
+from botcore.strategy.carry import carry_returns_honest
 from botcore.strategy.cross_sectional import momentum_weights
 
 UNIVERSE = [
@@ -70,13 +70,15 @@ def window_stats(equity: pd.Series, lo: str, hi: str) -> dict:
 def main() -> None:
     closes = load_universe(UNIVERSE)
     funding = load_funding(UNIVERSE).reindex(closes.index).fillna(0.0)
+    perp = load_perp_closes(UNIVERSE).reindex(closes.index)
 
     weights = momentum_weights(closes, lookback=30, skip=2, top_k=5, rebalance_days=7)
     mom = run_portfolio(
         closes, weights,
         PortfolioConfig(cost_bps=9.5, target_vol=SLEEVE_VOL, max_leverage=3.0, periods_per_year=PPY),
     )
-    carry = vol_target(carry_returns(funding, 7, 7, cost_bps=6.0), SLEEVE_VOL)
+    carry_raw = carry_returns_honest(funding, closes, perp, 7, 7, cost_bps=6.0, margin_fraction=0.30)
+    carry = vol_target(carry_raw, SLEEVE_VOL, max_lev=2.0)
     common = mom.returns.index.intersection(carry.index)
     # Equal-risk blend of two already-vol-targeted sleeves; no second re-lever.
     blend = 0.5 * mom.returns.reindex(common).fillna(0.0) + 0.5 * carry.reindex(common).fillna(0.0)

@@ -85,3 +85,61 @@ def load_funding(
     panel = pd.DataFrame(daily).sort_index()
     panel = panel.loc[pd.to_datetime(start, utc=True):]
     return panel
+
+
+def _fetch_perp_daily(perp: str, start: str, end: str | None) -> pd.DataFrame:
+    """Page through one perp's daily OHLCV via ccxt (binanceusdm)."""
+    import ccxt
+
+    ex = ccxt.binanceusdm({"enableRateLimit": True})
+    since = ex.parse8601(f"{start}T00:00:00Z")
+    end_ms = ex.parse8601(f"{end}T00:00:00Z") if end else None
+    tf_ms = ex.parse_timeframe("1d") * 1000
+
+    rows: list[list] = []
+    while True:
+        batch = ex.fetch_ohlcv(perp, timeframe="1d", since=since, limit=1000)
+        if not batch:
+            break
+        rows.extend(batch)
+        since = batch[-1][0] + tf_ms
+        if (end_ms and since >= end_ms) or len(batch) < 1000:
+            break
+
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df = df.drop_duplicates("ts").set_index("ts")
+    df.index = pd.to_datetime(df.index, unit="ms", utc=True)
+    if end_ms:
+        df = df[df.index < pd.to_datetime(end_ms, unit="ms", utc=True)]
+    return df
+
+
+def load_perp_closes(
+    symbols: list[str],
+    start: str = "2021-01-01",
+    end: str | None = "2024-01-01",
+    cache_dir: str = "data/cache",
+    use_cache: bool = True,
+) -> pd.DataFrame:
+    """Daily perp close panel (index=date, cols=spot-style symbol e.g. BTC/USDT).
+
+    Needed to model the carry sleeve's basis PnL: the long-spot/short-perp hedge
+    is imperfect, and (spot_ret - perp_ret) is the realised tracking error that
+    blows out in stress. Without it, carry looks risk-free (it isn't).
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    closes: dict[str, pd.Series] = {}
+    for sym in symbols:
+        base = sym.split("/")[0]
+        perp = f"{base}/USDT:USDT"
+        cache_file = Path(cache_dir) / f"perp_binance_{base}_1d.parquet"
+        if use_cache and cache_file.exists():
+            df = pd.read_parquet(cache_file)
+        else:
+            df = _fetch_perp_daily(perp, start, end)
+            if not df.empty:
+                df.to_parquet(cache_file)
+        if not df.empty:
+            closes[sym] = df["close"]
+    panel = pd.DataFrame(closes).sort_index()
+    return panel.loc[pd.to_datetime(start, utc=True):]

@@ -21,10 +21,10 @@ import numpy as np
 import pandas as pd
 
 from botcore.backtest.portfolio import PortfolioConfig, run_portfolio
-from botcore.data.funding import load_funding
+from botcore.data.funding import load_funding, load_perp_closes
 from botcore.data.universe import load_universe
 from botcore.metrics.performance import compute_metrics
-from botcore.strategy.carry import carry_returns
+from botcore.strategy.carry import carry_returns_honest
 from botcore.strategy.cross_sectional import momentum_weights
 
 UNIVERSE = [
@@ -67,6 +67,7 @@ def report(label: str, equity: pd.Series, ppy: int = PPY) -> None:
 def main() -> None:
     closes = load_universe(UNIVERSE)
     funding = load_funding(UNIVERSE).reindex(closes.index).fillna(0.0)
+    perp = load_perp_closes(UNIVERSE).reindex(closes.index)
     print(f"Universe: {len(closes.columns)} coins, {len(closes)} daily bars "
           f"({closes.index[0].date()} -> {closes.index[-1].date()})")
 
@@ -80,9 +81,14 @@ def main() -> None:
     )
     mom_ret = mom.returns
 
-    # --- Sleeve B: funding carry ---
-    carry_raw = carry_returns(funding, select_lookback=7, rebalance_days=7, cost_bps=6.0)
-    carry_ret = vol_target(carry_raw, SLEEVE_VOL)  # lever the low-vol carry up to 15%
+    # --- Sleeve B: funding carry (honest: basis risk + capital haircut) ---
+    # Cap leverage at 2x: daily data can't see intraday liquidation cascades, so
+    # we refuse to lever hard into a risk we can't measure.
+    carry_raw = carry_returns_honest(
+        funding, closes, perp, select_lookback=7, rebalance_days=7, cost_bps=6.0,
+        margin_fraction=0.30,
+    )
+    carry_ret = vol_target(carry_raw, SLEEVE_VOL, max_lev=2.0)
 
     # --- Blend: equal risk weight of two already-vol-targeted sleeves. ---
     # No second vol-target layer: re-levering an already-sized blend over-levers

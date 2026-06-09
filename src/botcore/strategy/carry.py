@@ -59,3 +59,64 @@ def carry_returns(
     cost = turnover * (cost_bps / 1e4) * legs
 
     return (gross - cost).rename("carry")
+
+
+def _basket_weights(funding_daily, select_lookback, rebalance_days, min_funding, top_k):
+    """Shared basket-selection logic (positive trailing-funding coins)."""
+    trail = funding_daily.rolling(select_lookback).mean().shift(1)
+    n, cols = len(funding_daily), funding_daily.columns
+    w = pd.DataFrame(np.nan, index=funding_daily.index, columns=cols)
+    for r in range(0, n, rebalance_days):
+        pos = trail.iloc[r]
+        pos = pos[pos > min_funding].dropna()
+        if pos.empty:
+            w.iloc[r] = 0.0
+            continue
+        if top_k is not None:
+            pos = pos.sort_values(ascending=False).iloc[:top_k]
+        row = pd.Series(0.0, index=cols)
+        row[pos.index] = 1.0 / len(pos)
+        w.iloc[r] = row.values
+    return w.ffill().fillna(0.0)
+
+
+def carry_returns_honest(
+    funding_daily: pd.DataFrame,
+    spot_closes: pd.DataFrame,
+    perp_closes: pd.DataFrame,
+    select_lookback: int = 7,
+    rebalance_days: int = 7,
+    min_funding: float = 0.0,
+    top_k: int | None = None,
+    cost_bps: float = 6.0,
+    legs: int = 2,
+    margin_fraction: float = 0.30,
+) -> pd.Series:
+    """Carry returns with basis risk and a capital-efficiency haircut.
+
+    Per unit notional, daily PnL = funding + (spot_ret - perp_ret). The basis
+    term is the imperfect-hedge tracking error: ~0 in calm markets, sharply
+    negative when the perp spikes above spot (short squeeze) — the real risk the
+    naive model ignored. Return is then taken on *deployed* capital, which is
+    notional * (1 + margin_fraction) because the short perp locks margin.
+    """
+    idx = spot_closes.index
+    funding = funding_daily.reindex(idx).fillna(0.0)
+    spot_ret = spot_closes.pct_change()
+    perp_ret = perp_closes.reindex(idx).pct_change()
+
+    # Per-coin carry PnL on notional (long spot, short perp, collect funding).
+    coin_pnl = (funding + (spot_ret - perp_ret)).fillna(0.0)
+
+    cols = [c for c in funding_daily.columns if c in spot_closes.columns and c in perp_closes.columns]
+    weights = _basket_weights(funding_daily[cols], select_lookback, rebalance_days, min_funding, top_k)
+    weights = weights.reindex(idx).ffill().fillna(0.0)
+
+    w_held = weights.shift(1).fillna(0.0)
+    gross = (w_held * coin_pnl[cols]).sum(axis=1)
+
+    turnover = weights.diff().abs().sum(axis=1).fillna(0.0)
+    cost = turnover * (cost_bps / 1e4) * legs
+
+    net_on_notional = gross - cost
+    return (net_on_notional / (1.0 + margin_fraction)).rename("carry_honest")
