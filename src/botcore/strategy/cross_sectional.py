@@ -28,12 +28,18 @@ def momentum_weights(
     top_k: int = 5,
     rebalance_days: int = 7,
     dollar_neutral: bool = False,
+    regime_ma: int | None = 50,
 ) -> pd.DataFrame:
     """Compute target weights from cross-sectional momentum.
 
     closes: DataFrame of daily closes (index=dates, cols=symbols).
-    Returns a DataFrame of target weights, defined only on rebalance dates and
-    forward-filled in between (the engine reads the row valid at each date).
+    regime_ma: if set, an aggregate index-trend filter. Build an equal-weight
+        index of the universe; when it is below its own `regime_ma`-day moving
+        average (market in a downtrend), the whole book goes to cash. Set to
+        None to disable. An index-trend gate cleanly sidesteps bear regimes; a
+        per-coin breadth gate (tested) just whipsaws, so we use index trend.
+    Returns a DataFrame of target weights, forward-filled between rebalances and
+    masked daily by the regime gate (the engine reads the row valid at each date).
     """
     # Trailing momentum: pct change over `lookback`, ending `skip` days ago.
     # shift(skip) moves the window's end back, so today's value uses data up to
@@ -63,4 +69,14 @@ def momentum_weights(
         weights.iloc[r] = w.values
 
     # Carry each rebalance decision forward; zero before the first valid one.
-    return weights.ffill().fillna(0.0)
+    weights = weights.ffill().fillna(0.0)
+
+    # Aggregate index-trend regime gate: hold cash when the equal-weight index
+    # is below its `regime_ma`-day MA. Causal (index uses closes up to day t;
+    # the engine lags weights by one day before applying them).
+    if regime_ma:
+        index = (1.0 + closes.pct_change().mean(axis=1)).cumprod()
+        gate = (index > index.rolling(regime_ma).mean()).astype(float)
+        weights = weights.mul(gate, axis=0)
+
+    return weights

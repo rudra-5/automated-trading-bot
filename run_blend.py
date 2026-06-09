@@ -84,10 +84,11 @@ def main() -> None:
     carry_raw = carry_returns(funding, select_lookback=7, rebalance_days=7, cost_bps=6.0)
     carry_ret = vol_target(carry_raw, SLEEVE_VOL)  # lever the low-vol carry up to 15%
 
-    # --- Blend: equal risk weight, then cap combined vol at 15% ---
+    # --- Blend: equal risk weight of two already-vol-targeted sleeves. ---
+    # No second vol-target layer: re-levering an already-sized blend over-levers
+    # into calm regimes and amplifies the next drawdown (it did, in 2022).
     common = mom_ret.index.intersection(carry_ret.index)
-    blend_raw = 0.5 * mom_ret.reindex(common).fillna(0.0) + 0.5 * carry_ret.reindex(common).fillna(0.0)
-    blend_ret = vol_target(blend_raw, SLEEVE_VOL)
+    blend_ret = 0.5 * mom_ret.reindex(common).fillna(0.0) + 0.5 * carry_ret.reindex(common).fillna(0.0)
 
     corr = mom_ret.reindex(common).fillna(0.0).corr(carry_ret.reindex(common).fillna(0.0))
     print(f"Sleeve correlation (mom vs carry): {corr:+.2f}   "
