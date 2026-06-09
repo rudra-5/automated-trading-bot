@@ -1,0 +1,31 @@
+# Real-data backtest: Binance BTC/USDT 1h, 2021-2024. Mean reversion.
+data:
+  source: ccxt
+  exchange: binance
+  symbol: BTC/USDT
+  timeframe: 1h
+  start: "2021-01-01"
+  end: "2024-01-01"
+  cache_dir: data/cache
+
+strategy:
+  name: mean_reversion
+  params:
+    window: 48
+    entry_z: 2.0
+    exit_z: 0.3
+    atr_window: 14
+    trend_filter: 200
+    allow_short: true
+
+backtest:
+  initial_capital: 10000
+  fee_bps: 7.5
+  slippage_bps: 2.0
+  risk:
+    risk_per_trade: 0.01
+    atr_stop_mult: 3.0
+    max_leverage: 1.0
+
+evaluation:
+  oos_fraction: 0.3
