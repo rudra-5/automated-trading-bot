@@ -3,10 +3,11 @@ name: paper-carry
 # Cloud "cron" for the Phase 1 paper carry bot. Each run fires ONE decision
 # cycle (no long-lived process) and commits the updated state + logs back to the
 # repo, so the next run resumes from disk. Paper only — no real orders, no keys.
+# Schedule DISABLED: GitHub's US runners are geo-blocked by Binance (HTTP 451).
+# The bot now runs on an always-on non-US host (PebbleHost) via
+# `python run_carry_paper.py --loop 900`. Manual trigger kept for ad-hoc checks.
 on:
-  schedule:
-    - cron: "*/15 * * * *"   # every 15 min (GitHub may delay this under load)
-  workflow_dispatch: {}        # manual "Run workflow" button for testing
+  workflow_dispatch: {}        # manual "Run workflow" button only
 
 permissions:
   contents: write              # needed to push the state commit back
