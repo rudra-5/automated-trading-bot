@@ -1,0 +1,1 @@
+PAPER MODE — no real orders. State: state/paper_carry.json  Blotter: logs/paper_blotter.csv
