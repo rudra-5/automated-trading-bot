@@ -1,0 +1,47 @@
+name: paper-carry
+
+# Cloud "cron" for the Phase 1 paper carry bot. Each run fires ONE decision
+# cycle (no long-lived process) and commits the updated state + logs back to the
+# repo, so the next run resumes from disk. Paper only — no real orders, no keys.
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # every 15 min (GitHub may delay this under load)
+  workflow_dispatch: {}        # manual "Run workflow" button for testing
+
+permissions:
+  contents: write              # needed to push the state commit back
+
+concurrency:
+  group: paper-carry           # never let two cycles race the state file / push
+  cancel-in-progress: false
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt ccxt
+
+      - name: Run one paper cycle
+        run: |
+          mkdir -p logs state
+          python run_carry_paper.py | tee -a logs/paper_cycles.txt
+
+      - name: Commit state + output
+        run: |
+          git config user.name "paper-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f state/paper_carry.json logs/paper_blotter.csv logs/paper_cycles.txt
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "paper cycle $(date -u +%FT%TZ) [skip ci]"
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
