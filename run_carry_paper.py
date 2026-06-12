@@ -50,7 +50,11 @@ def main() -> None:
 
     print("PAPER MODE — no real orders. State: state/paper_carry.json  Blotter: logs/paper_blotter.csv")
     if args.loop <= 0:
-        _print_cycle(runner.cycle())
+        try:
+            _print_cycle(runner.cycle())
+        except Exception as e:  # surface the cause in the log, then fail loudly
+            print(f"CYCLE FAILED: {type(e).__name__}: {str(e)[:200]}", flush=True)
+            sys.exit(1)
         return
 
     print(f"Looping every {args.loop}s. Ctrl-C to stop.")
