@@ -29,10 +29,19 @@ def momentum_weights(
     rebalance_days: int = 7,
     dollar_neutral: bool = False,
     regime_ma: int | None = 50,
+    lookbacks: tuple[int, ...] | None = None,
+    weighting: str = "equal",
+    vol_window: int = 30,
 ) -> pd.DataFrame:
     """Compute target weights from cross-sectional momentum.
 
     closes: DataFrame of daily closes (index=dates, cols=symbols).
+    lookbacks: if given, combine multiple momentum horizons by averaging each
+        coin's cross-sectional *rank* across horizons (rank-averaging is scale-
+        free, robust). Falls back to the single `lookback` when None.
+    weighting: "equal" (1/top_k each) or "invvol" (inverse trailing-vol, risk
+        parity across the basket — stops one high-vol alt hijacking the risk).
+    vol_window: trailing window for inverse-vol weights.
     regime_ma: if set, an aggregate index-trend filter. Build an equal-weight
         index of the universe; when it is below its own `regime_ma`-day moving
         average (market in a downtrend), the whole book goes to cash. Set to
@@ -41,11 +50,20 @@ def momentum_weights(
     Returns a DataFrame of target weights, forward-filled between rebalances and
     masked daily by the regime gate (the engine reads the row valid at each date).
     """
-    # Trailing momentum: pct change over `lookback`, ending `skip` days ago.
-    # shift(skip) moves the window's end back, so today's value uses data up to
-    # `skip` days ago -> strictly causal, no lookahead.
+    # Momentum score per coin. shift(skip) ends the window `skip` days back so
+    # today's value uses data up to `skip` days ago -> strictly causal.
+    horizons = lookbacks if lookbacks else (lookback,)
     shifted = closes.shift(skip)
-    momentum = shifted / shifted.shift(lookback) - 1.0
+    # Average the cross-sectional rank across horizons (scale-free combination).
+    rank_sum = None
+    for lb in horizons:
+        mom_lb = shifted / shifted.shift(lb) - 1.0
+        rk = mom_lb.rank(axis=1)  # higher return -> higher rank
+        rank_sum = rk if rank_sum is None else rank_sum + rk
+    score = rank_sum / len(horizons)
+
+    # Trailing per-coin volatility for inverse-vol weighting.
+    inv_vol = 1.0 / closes.pct_change().rolling(vol_window).std()
 
     n = len(closes)
     # Start all-NaN; only rebalance rows get an explicit full weight vector.
@@ -54,14 +72,20 @@ def momentum_weights(
     weights = pd.DataFrame(np.nan, index=closes.index, columns=closes.columns)
 
     for r in range(0, n, rebalance_days):
-        row = momentum.iloc[r]
+        row = score.iloc[r]
         valid = row.dropna()
         if len(valid) < top_k:
             continue  # not enough history yet
 
         ranked = valid.sort_values(ascending=False)
+        longs = ranked.index[:top_k]
         w = pd.Series(0.0, index=closes.columns)
-        w[ranked.index[:top_k]] = 1.0 / top_k
+
+        if weighting == "invvol":
+            iv = inv_vol.iloc[r].reindex(longs).fillna(0.0)
+            w[longs] = (iv / iv.sum()).values if iv.sum() > 0 else 1.0 / top_k
+        else:
+            w[longs] = 1.0 / top_k
 
         if dollar_neutral and len(valid) >= 2 * top_k:
             w[ranked.index[-top_k:]] = -1.0 / top_k

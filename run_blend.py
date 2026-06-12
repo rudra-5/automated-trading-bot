@@ -74,7 +74,8 @@ def main() -> None:
     SLEEVE_VOL = 0.15  # each sleeve scaled to 15% vol before blending
 
     # --- Sleeve A: cross-sectional momentum ---
-    weights = momentum_weights(closes, lookback=30, skip=2, top_k=5, rebalance_days=7)
+    weights = momentum_weights(closes, lookback=30, skip=2, top_k=5, rebalance_days=7,
+                              weighting="invvol")
     mom = run_portfolio(
         closes, weights,
         PortfolioConfig(cost_bps=9.5, target_vol=SLEEVE_VOL, max_leverage=3.0, periods_per_year=PPY),

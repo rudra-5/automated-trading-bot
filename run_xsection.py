@@ -59,6 +59,7 @@ def main() -> None:
 
     weights = momentum_weights(
         closes, lookback=30, skip=2, top_k=5, rebalance_days=7, dollar_neutral=False,
+        weighting="invvol",
     )
     cfg = PortfolioConfig(
         cost_bps=9.5, target_vol=0.20, vol_lookback=30, max_leverage=2.0,

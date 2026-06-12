@@ -89,7 +89,7 @@ def report(label, equity, ppy=PPY):
 def momentum_returns(closes, cfg_port, lookback, top_k, regime_ma):
     """Full-history momentum sleeve daily returns for one parameter set."""
     w = momentum_weights(closes, lookback=lookback, skip=2, top_k=top_k,
-                         rebalance_days=7, regime_ma=regime_ma)
+                         rebalance_days=7, regime_ma=regime_ma, weighting="invvol")
     return run_portfolio(closes, w, cfg_port).returns
 
 

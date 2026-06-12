@@ -72,7 +72,8 @@ def main() -> None:
     funding = load_funding(UNIVERSE).reindex(closes.index).fillna(0.0)
     perp = load_perp_closes(UNIVERSE).reindex(closes.index)
 
-    weights = momentum_weights(closes, lookback=30, skip=2, top_k=5, rebalance_days=7)
+    weights = momentum_weights(closes, lookback=30, skip=2, top_k=5, rebalance_days=7,
+                              weighting="invvol")
     mom = run_portfolio(
         closes, weights,
         PortfolioConfig(cost_bps=9.5, target_vol=SLEEVE_VOL, max_leverage=3.0, periods_per_year=PPY),
