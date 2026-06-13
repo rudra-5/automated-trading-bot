@@ -33,7 +33,7 @@ jobs:
         run: |
           set -o pipefail   # don't let `tee` mask a python crash (step goes red)
           mkdir -p logs state
-          python run_carry_paper.py 2>&1 | tee -a logs/paper_cycles.txt
+          python run_carry_paper.py --loop 0 2>&1 | tee -a logs/paper_cycles.txt
 
       - name: Commit state + output
         if: always()        # still record the diagnostic log even if the cycle failed

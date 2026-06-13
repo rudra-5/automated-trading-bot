@@ -7,8 +7,9 @@ stress test), and records intended fills to a paper blotter. Equity is marked to
 the live market each cycle so live behaviour can be reconciled against backtest.
 
 Usage:
-    python run_carry_paper.py            # one cycle, print decision
-    python run_carry_paper.py --loop 900 # cycle every 900s (cron-style), Ctrl-C to stop
+    python run_carry_paper.py            # loop every 15 min (default), Ctrl-C to stop
+    python run_carry_paper.py --loop 0   # run a single cycle and exit
+    python run_carry_paper.py --loop 300 # custom interval (seconds)
 
 Nothing here touches an order endpoint. This is the watch-only stage that must
 run clean for weeks before any real money (Phase 3) is considered.
@@ -40,7 +41,8 @@ def _print_cycle(d: dict) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--loop", type=int, default=0, help="seconds between cycles; 0 = run once")
+    ap.add_argument("--loop", type=int, default=900,
+                    help="seconds between cycles; default 900 (15 min), pass 0 to run a single cycle")
     ap.add_argument("--leverage", type=float, default=3.0)
     args = ap.parse_args()
 
