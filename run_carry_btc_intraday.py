@@ -54,19 +54,55 @@ def load_btc_intraday() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Se
     return _to_8h(spot_1h), _to_8h(perp_1h), basis_1h, funding_8h
 
 
+def _held_hysteresis(trail: pd.Series, enter: float, exit_: float,
+                     min_hold: int) -> pd.Series:
+    """Stateful hold signal with an enter/exit band and a minimum dwell.
+
+    Enter the carry only when trailing funding clears `enter` (well above the
+    near-zero noise floor where cost dominates); stay in until it falls below
+    `exit_` (a lower bar, so a one-settlement wobble across the entry level does
+    not flip us flat). Once in, hold at least `min_hold` settlements before any
+    exit is allowed, so a single round trip always gets time to earn back its
+    cost. In a dead-funding regime (trail ~ 0) this never enters => no churn.
+    """
+    out = np.zeros(len(trail))
+    state = 0.0
+    held_for = 0
+    vals = trail.values
+    for i, t in enumerate(vals):
+        if state > 0:
+            held_for += 1
+            if held_for >= min_hold and (not np.isfinite(t) or t < exit_):
+                state = 0.0
+                held_for = 0
+        else:
+            if np.isfinite(t) and t >= enter:
+                state = 1.0
+                held_for = 0
+        out[i] = state
+    return pd.Series(out, index=trail.index)
+
+
 def build_carry_8h(spot: pd.DataFrame, perp: pd.DataFrame, basis_1h: pd.DataFrame,
-                   funding: pd.Series, select_lookback: int = 3) -> pd.DataFrame:
+                   funding: pd.Series, select_lookback: int = 3,
+                   enter_funding: float = 0.0, exit_funding: float = 0.0,
+                   min_hold: int = 0) -> pd.DataFrame:
     """Per-8h carry book: held flag, net funding, basis PnL, real short-leg excursion.
 
-    Position = long-spot / short-perp whenever trailing-mean funding (causal,
-    lagged) is positive. Earn that settlement's funding on the held position.
+    Position = long-spot / short-perp driven by trailing-mean funding (causal,
+    lagged). With the default (enter=exit=0, min_hold=0) this is the original
+    `trail > 0` rule; raising `enter_funding` above the noise floor and setting
+    `exit_funding` below it adds the hysteresis band that stops near-zero churn.
     `up_excursion` uses the *perp* window high (real short-leg adverse move).
     `basis_pnl` = spot_ret - perp_ret close-to-close (the imperfect-hedge term).
     """
     idx = spot.index.intersection(perp.index)
     f = funding.reindex(idx).fillna(0.0)
     trail = f.rolling(select_lookback).mean().shift(1)
-    held = (trail > 0).astype(float)  # causal: yesterday's signal
+    if enter_funding <= 0.0 and exit_funding <= 0.0 and min_hold <= 0:
+        held = (trail > 0).astype(float)  # original rule (causal: yesterday's signal)
+    else:
+        held = _held_hysteresis(trail, enter_funding, exit_funding, min_hold)
 
     turnover = held.diff().abs().fillna(held)
     cost = turnover * (COST_BPS / 1e4) * LEGS
@@ -156,6 +192,27 @@ def main() -> None:
         m = simulate(book, best)
         print(f"\nMax leverage with ZERO intraday liquidations: {best}x "
               f"-> CAGR {m['cagr']:+.2%}, Sharpe {m['sharpe']:.2f}, MaxDD {m['max_dd']:+.2%}")
+
+    # --- Gate comparison: original trail>0 vs hysteresis band + dwell, at 3x ---
+    # Enter only above the noise floor; exit lower; hold a minimum dwell so each
+    # round trip earns its cost. Dead-funding regimes (live now) => stays flat.
+    print("\nGate sweep @ 3x (enter/exit funding band per 8h, min_hold settlements):")
+    print("  enter    exit    dwell   held%   #flips   CAGR      Sharpe   MaxDD")
+    print("  " + "-" * 68)
+    configs = [
+        (0.0,   0.0,   0),   # original trail>0
+        (5e-5,  1e-5,  3),   # half-median enter, noise exit, 1-day dwell
+        (1e-4,  2e-5,  3),   # median enter (only solid carry)
+        (1e-4,  5e-5,  6),   # median enter, 2-day dwell
+    ]
+    for en, ex, mh in configs:
+        b = build_carry_8h(spot, perp, basis_1h, funding,
+                           enter_funding=en, exit_funding=ex, min_hold=mh)
+        m = simulate(b, 3)
+        flips = int(b["held"].diff().abs().fillna(b["held"]).sum())
+        tag = "trail>0 " if (en == 0 and ex == 0 and mh == 0) else f"{en:.0e}/{ex:.0e}"
+        print(f"  {tag:>8}  {ex:>5.0e}  {mh:>5d}   {b['held'].mean():>4.0%}   "
+              f"{flips:>5d}   {m['cagr']:>+7.2%}  {m['sharpe']:>6.2f}  {m['max_dd']:>+7.2%}")
 
 
 if __name__ == "__main__":

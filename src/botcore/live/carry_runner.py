@@ -26,7 +26,15 @@ FUNDING_INTERVAL = pd.Timedelta(hours=8)  # Binance USD-M settles every 8h
 @dataclass
 class CarryConfig:
     leverage: float = 3.0
-    min_funding: float = 0.0      # only hold when trailing funding strictly positive
+    # Hysteresis funding band (per-8h fraction). Enter only when trailing funding
+    # clears `enter_funding` (well above the near-zero noise floor where a round
+    # trip's cost dwarfs the carry); stay in until it drops below `exit_funding`,
+    # so a one-settlement wobble across the entry level does not whipsaw us flat.
+    # Defaults are the backtest-tuned values (BTC 8h, 2021-23): held 58% of the
+    # time, CAGR +32.9% / Sharpe 6.54 @3x vs +23.8% / 4.31 for the old trail>0.
+    enter_funding: float = 1e-4   # ~median historical funding (only solid carry)
+    exit_funding: float = 2e-5    # noise-floor exit (below this, no edge)
+    min_hold: int = 3             # settlements (=1 day) before any exit: let a RT earn out
     basis_kill: float = 0.015     # flatten if perp trades >1.5% above spot (squeeze)
     rebalance_band: float = 0.10  # only resize when target notional drifts >10% of equity
 
@@ -38,15 +46,34 @@ class PaperCarryRunner:
         self.cfg = cfg or CarryConfig()
         self.cfg.leverage = min(self.cfg.leverage, MAX_LEVERAGE)
 
+    def _settlements_held(self, snap: MarketSnapshot) -> int:
+        """How many 8h settlements the current short has been open (0 if flat)."""
+        opened = self.broker.state.perp_opened_ts
+        if opened is None:
+            return 0
+        elapsed = snap.ts - pd.Timestamp(opened)
+        return max(0, int(elapsed / FUNDING_INTERVAL))
+
     def _target_notional(self, snap: MarketSnapshot, equity: float) -> float:
-        """Desired delta-neutral notional (USD). 0 => flat."""
+        """Desired delta-neutral notional (USD), with an enter/exit hysteresis
+        band and a minimum dwell. 0 => flat."""
         # Hard risk gate first: an active short-squeeze is the one thing that
-        # liquidates this trade, so refuse to be short into it.
+        # liquidates this trade, so refuse to be short into it (overrides dwell).
         if snap.basis > self.cfg.basis_kill:
             return 0.0
-        if snap.funding_trail <= self.cfg.min_funding:
-            return 0.0
-        return self.cfg.leverage * equity
+
+        currently_held = self.broker.state.perp.units < 0
+        if currently_held:
+            # Stay in until funding drops below the (lower) exit bar, and never
+            # exit before the minimum dwell — so each round trip earns its cost.
+            if (self._settlements_held(snap) >= self.cfg.min_hold
+                    and snap.funding_trail < self.cfg.exit_funding):
+                return 0.0
+            return self.cfg.leverage * equity
+        # Flat: only enter when funding clears the (higher) entry bar.
+        if snap.funding_trail >= self.cfg.enter_funding:
+            return self.cfg.leverage * equity
+        return 0.0
 
     def cycle(self) -> dict:
         snap = self.feed.snapshot()

@@ -5,3 +5,6 @@ pyarrow>=12.0        # parquet cache
 
 # Live/real exchange data and paper/live trading:
 ccxt>=4.0
+
+# Tests:
+pytest>=7.0
